@@ -1,0 +1,70 @@
+---
+# roles/sinequa_postconf/tasks/dev_tools.yml
+
+- name: Install Coexya Developer Tools
+  block:
+    - name: Install Chocolatey and extensions
+      chocolatey.chocolatey.win_chocolatey:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - chocolatey
+        - chocolatey-compatibility.extension
+        - chocolatey-core.extension
+        - notepadplusplus
+
+    - name: Check if Insomnia is already installed
+      ansible.windows.win_stat:
+        path: 'C:\Program Files\Insomnia'
+      register: insomnia_already_installed
+
+    - name: Download Insomnia installer
+      ansible.windows.win_get_url:
+        url: "{{ insomnia_url }}"
+        dest: "{{ insomnia_installer_path }}"
+      when: not insomnia_already_installed.stat.exists
+
+    - name: Install Insomnia silently (system-wide)
+      ansible.windows.win_package:
+        path: 'C:\Windows\Temp\Insomnia.Core-nsis-11.6.1.exe'
+        arguments: '/S /D=C:\Program Files\Insomnia'
+        creates_path: 'C:\Program Files\Insomnia\Insomnia.exe'
+      when: not insomnia_already_installed.stat.exists
+
+    - name: Download Fiddler Classic installer
+      ansible.windows.win_get_url:
+        url: "{{ fiddler_url }}"
+        dest: "{{ fiddler_installer_path }}"
+        force: false
+
+    - name: Install Fiddler Classic silently for all users
+      ansible.windows.win_package:
+        path: "{{ fiddler_installer_path }}"
+        arguments: '/S /D=C:\Program Files\Fiddler'
+        state: present
+
+    - name: Check Fiddler executable exists
+      ansible.windows.win_stat:
+        path: "C:\\Program Files\\Fiddler\\Fiddler.exe"
+      register: fiddler_bin
+
+    - name: Create Fiddler shortcuts
+      community.windows.win_shortcut:
+        dest: "{{ item }}"
+        src: "C:\\Program Files\\Fiddler\\Fiddler.exe"
+        directory: "C:\\Program Files\\Fiddler"
+        icon: "C:\\Program Files\\Fiddler\\Fiddler.exe"
+        state: present
+      loop:
+        - "C:\\Users\\Public\\Desktop\\Fiddler.lnk"
+        - "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Fiddler.lnk"
+      when: fiddler_bin.stat.exists
+
+    - name: Install PsExec
+      chocolatey.chocolatey.win_chocolatey:
+        name: psexec
+        state: present
+      become_user: sinequadmin
+  become: true
+  become_method: runas
+  become_user: SYSTEM

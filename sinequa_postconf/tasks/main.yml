@@ -1,0 +1,20 @@
+---
+# roles/sinequa_postconf/tasks/main.yml
+
+- name: Run Sinequa common configuration
+  ansible.builtin.include_tasks: common.yml
+
+- name: Run engine-specific configuration
+  ansible.builtin.include_tasks: engine.yml
+  when: "'vm_engine' in group_names"
+
+- name: Run developer tools installation
+  ansible.builtin.include_tasks: dev_tools.yml
+  when: >
+    'vm_dev' in group_names or
+    'vm_dev2' in group_names or
+    'vm_demo' in group_names
+
+- name: Run webapp-specific configuration
+  ansible.builtin.include_tasks: webapp.yml
+  when: "'vm_webapp' in group_names"

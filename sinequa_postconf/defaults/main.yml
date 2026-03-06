@@ -1,0 +1,18 @@
+---
+# roles/sinequa_postconf/defaults/main.yml
+
+azure_remote_path: '\\{{ storage_account_name }}.file.core.windows.net\{{ azure_share_suffix }}'
+firstboot_flag: "F:\\sinequa\\firstboot.done"
+sinequa_local_data_folder: "F:\\sinequa\\local-data"
+
+# Placeholders for variables that were referenced but not defined in the source
+storage_account_name: "YOUR_STORAGE_ACCOUNT_NAME"
+azure_share_suffix: "YOUR_SHARE_SUFFIX"
+storage_account_key: "YOUR_STORAGE_ACCOUNT_KEY"
+storage_account_username: "YOUR_STORAGE_ACCOUNT_USERNAME"
+secure_keyvault_name: "YOUR_KEYVAULT_NAME"
+
+insomnia_url: "YOUR_INSOMNIA_DOWNLOAD_URL"
+insomnia_installer_path: 'C:\Windows\Temp\Insomnia.Core-nsis-11.6.1.exe'
+fiddler_url: "YOUR_FIDDLER_DOWNLOAD_URL"
+fiddler_installer_path: 'C:\Windows\Temp\fiddler_installer.exe'

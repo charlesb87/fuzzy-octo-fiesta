@@ -1,0 +1,15 @@
+---
+# roles/sinequa_postconf/tasks/webapp.yml
+
+- name: Allow inbound TCP 8443
+  community.windows.win_firewall_rule:
+    name: "Allow TCP 8443"
+    enable: true
+    state: present
+    protocol: tcp
+    localport: 8443
+    direction: in
+    action: allow
+  become: true
+  become_method: runas
+  become_user: SYSTEM

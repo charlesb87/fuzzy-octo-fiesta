@@ -1,0 +1,178 @@
+---
+# roles/sinequa_postconf/tasks/common.yml
+
+- name: List drives
+  ansible.windows.win_shell: fsutil fsinfo drives
+  register: drives
+
+- name: Disable Recycle Bin via machine policy (all users)
+  ansible.windows.win_regedit:
+    path: HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer
+    name: NoRecycleFiles
+    data: 1
+    type: dword
+    state: present
+
+- name: Confirm file delete prompt (optional)
+  ansible.windows.win_regedit:
+    path: HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer
+    name: ConfirmFileDelete
+    data: 1
+    type: dword
+    state: present
+
+- name: Explorer BitBucket default - NukeOnDelete = 1 (optional)
+  ansible.windows.win_regedit:
+    path: HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket
+    name: NukeOnDelete
+    data: 1
+    type: dword
+    state: present
+
+- name: Import and mount data disk (F)
+  ansible.windows.win_shell: |
+    $d = (echo "list disk" | diskpart | ? { $_ -match "128 GB" -and $_ -match "Foreign" } | select -f 1) -replace '\D*(\d+).*', '$1';
+    "select disk $d`nimport" | diskpart;
+    Start-Sleep 1;
+    $v = (echo "list volume" | diskpart | ? { $_ -match "F Data dis" } | select -f 1) -replace '\D*(\d+).*', '$1';
+    "select volume $v`nassign letter=F" | diskpart
+  when:
+    - "drives.stdout is defined"
+    - "'F:' not in drives.stdout"
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+
+- name: Check if firstboot flag exists
+  ansible.windows.win_stat:
+    path: "{{ firstboot_flag }}"
+  register: firstboot_file
+
+- name: Delete local-data and remove flag
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ sinequa_local_data_folder }}"
+    - "{{ firstboot_flag }}"
+  when: firstboot_file.stat.exists
+
+- name: Set timezone to 'Romance Standard Time' (GMT+01:00)
+  ansible.windows.win_timezone:
+    timezone: Romance Standard Time
+
+- name: Find AMADataStore.pkrvm* folders
+  ansible.windows.win_find:
+    paths: C:\WindowsAzure\Resources
+    file_type: directory
+    patterns: AMADataStore.pkrvm*
+  register: found_folders
+
+- name: Delete found folders
+  ansible.windows.win_file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ found_folders.files }}"
+  when: (found_folders.matched | default(0) | int) > 0
+
+- name: Manage UALSVC and Winmgmt Services
+  ansible.windows.win_service:
+    name: "{{ item.name }}"
+    state: "{{ item.state | default(omit) }}"
+    start_mode: "{{ item.start_mode | default(omit) }}"
+  loop:
+    - { name: UALSVC, state: stopped }
+    - { name: Winmgmt, state: stopped }
+    - { name: UALSVC, start_mode: disabled }
+
+- name: Add Node.js dir to system PATH
+  ansible.windows.win_path:
+    elements: ["C:\\Sinequa\\programs\\win\\node\\20.14.0"]
+    scope: machine
+
+- name: F Drive Configurations
+  block:
+    - name: Rename F volume on Sinequa VMs
+      ansible.windows.win_shell: label "F:" F Data disk
+
+    - name: Add Full Control to Cloud Accounts on F:\
+      ansible.windows.win_acl:
+        path: 'F:\'
+        user: 'NT AUTHORITY\Cloud Account Authentication'
+        rights: FullControl
+        type: allow
+        state: present
+        inherit: ContainerInherit,ObjectInherit
+        propagation: None
+
+    - name: Add Full Control to Administrators on F:\
+      ansible.windows.win_acl:
+        path: 'F:\'
+        user: 'BUILTIN\Administrators'
+        rights: FullControl
+        type: allow
+        state: present
+        inherit: ContainerInherit,ObjectInherit
+        propagation: None
+  when:
+    - "drives.stdout is defined"
+    - "'F:' in drives.stdout"
+
+- name: Disable automatic updates
+  ansible.windows.win_regedit:
+    path: HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU
+    name: NoAutoUpdate
+    data: 1
+    type: dword
+    state: present
+
+- name: Apply SDDL to sinequa.service
+  ansible.windows.win_command: >
+    sc.exe sdset sinequa.service D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)
+
+- name: Get SMB Global Mapping (by remote path)
+  ansible.windows.win_powershell:
+    script: |
+      Get-SmbGlobalMapping -RemotePath "{{ azure_remote_path }}"
+  register: smb_global_mapping_status
+
+- name: Remove ALL SMB Global Mappings when status is null or not equal to 0
+  ansible.windows.win_powershell:
+    script: |
+      Get-SmbGlobalMapping | Remove-SmbGlobalMapping -Force
+  when:
+    - smb_global_mapping_status.output | length == 0 or smb_global_mapping_status.output[0].Status is not defined or smb_global_mapping_status.output[0].Status != 0
+
+- name: Map Azure Files share to Z drive (per environment)
+  ansible.windows.win_powershell:
+    script: |
+      $password   = ConvertTo-SecureString "{{ storage_account_key }}" -AsPlainText -Force
+      $credential = New-Object System.Management.Automation.PSCredential ("{{ storage_account_username }}", $password)
+      $remotePath = "{{ azure_remote_path }}"
+      $localPath  = "Z:"
+      if (-not (Get-SmbGlobalMapping -LocalPath $localPath -ErrorAction SilentlyContinue)) {
+        New-SmbGlobalMapping -RemotePath $remotePath -LocalPath $localPath -Persistent $true -Credential $credential
+      }
+  when:
+    - azure_share_suffix is defined
+    - "'Z:' not in drives.stdout"
+
+- name: Get latest version of Key Vault secret
+  azure.azcollection.azure_rm_keyvaultsecret_info:
+    vault_uri: "{{ secure_keyvault_name }}"
+    name: "vm-{{ inventory_hostname }}-password"
+  register: kv_secret
+  delegate_to: localhost
+  run_once: false
+  no_log: true
+
+- name: Set local admin password from Key Vault (latest)
+  ansible.windows.win_user:
+    name: "sinequadmin"
+    password: "{{ kv_secret.secrets[0].secret }}"
+    update_password: always
+
+- name: Delete genAI-apps and all contents
+  ansible.windows.win_file:
+    path: F:\sinequa\data\sba\genAI-apps
+    state: absent

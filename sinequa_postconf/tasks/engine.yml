@@ -1,0 +1,44 @@
+---
+# roles/sinequa_postconf/tasks/engine.yml
+
+- name: Engine specific tasks
+  block:
+    - name: List drives
+      ansible.windows.win_shell: fsutil fsinfo drives
+      register: engine_drives
+
+    - name: Import and mount index disk (G)
+      ansible.windows.win_shell: |
+        $d = (echo "list disk" | diskpart | ? { $_ -match "1024 GB" -and $_ -match "Foreign" } | select -f 1) -replace '\D*(\d+).*', '$1';
+        "select disk $d`nimport" | diskpart;
+        Start-Sleep 1;
+        $v = (echo "list volume" | diskpart | ? { $_ -match "G Index dis" } | select -f 1) -replace '\D*(\d+).*', '$1';
+        "select volume $v`nassign letter=G" | diskpart
+      when:
+        - "engine_drives.stdout is defined"
+        - "'G:' not in engine_drives.stdout"
+
+    - name: Rename index disk (G)
+      ansible.windows.win_shell: label "G:" G Index dis
+      when:
+        - "engine_drives.stdout is defined"
+        - "'G:' in engine_drives.stdout"
+
+    - name: Remove Sinequa folders on G drive
+      ansible.windows.win_file:
+        path: "G:\\{{ item }}"
+        state: absent
+      loop:
+        - sinequa\audit
+        - sinequaStatus
+        - sinequa\data
+        - sinequa\local-data
+        - sinequa\log
+        - sinequa\queue-volumes
+        - sinequa\sinequa.xml
+      when:
+        - "engine_drives.stdout is defined"
+        - "'G:' in engine_drives.stdout"
+  become: true
+  become_method: runas
+  become_user: SYSTEM
